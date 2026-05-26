@@ -6,7 +6,7 @@
 # =============================================================================
 encoder: large  # ViT-L with VideoMAE pretrained weights (305M params)
 decoder_depth: 8
-img_size: 256
+img_size: 224       # VideoMAE requires 224x224
 num_frames: 48
 patch_size: 9  # Local RGB patch size (critical for performance)
 

@@ -4,7 +4,7 @@
 # Model Configuration
 encoder: base
 decoder_depth: 6
-img_size: 256
+img_size: 224       # VideoMAE-base requires 224x224
 num_frames: 48
 patch_size: 9  # Local RGB patch size
 

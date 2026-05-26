@@ -66,8 +66,11 @@ def parse_args():
                         help='Encoder variant')
     parser.add_argument('--decoder-depth', type=int, default=8,
                         help='Number of decoder layers')
-    parser.add_argument('--img-size', type=int, default=256,
-                        help='Input image size')
+    parser.add_argument('--img-size', type=int, default=224,
+                        help='Input image size. Must be 224 when using the '
+                             'pretrained VideoMAE-base encoder (fixed 14x14 '
+                             'patch grid). Set to 256 only with a from-scratch '
+                             'encoder.')
     parser.add_argument('--num-frames', type=int, default=48,
                         help='Number of frames per clip')
     parser.add_argument('--patch-size', type=int, default=9,

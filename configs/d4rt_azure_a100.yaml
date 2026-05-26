@@ -16,7 +16,7 @@
 # =============================================================================
 encoder: large  # ViT-L for good quality/speed tradeoff
 decoder_depth: 8
-img_size: 256
+img_size: 224       # VideoMAE requires 224x224
 num_frames: 48
 patch_size: 9
 
