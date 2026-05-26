@@ -24,7 +24,7 @@ def resize_frames_square(frames: np.ndarray, size: int) -> np.ndarray:
     out = np.empty((T, size, size, 3), dtype=np.uint8)
     for i in range(T):
         img = Image.fromarray(frames[i])
-        img = img.resize((size, size), Image.BILINEAR)
+        img = img.resize((size, size), Image.Resampling.BILINEAR)
         out[i] = np.asarray(img)
     return out
 
@@ -39,7 +39,11 @@ def compute_aspect_ratio(orig_h: int, orig_w: int) -> np.ndarray:
 
 
 def to_float32_normalized(arr: np.ndarray) -> np.ndarray:
-    """Convert uint8 [0, 255] to float32 [0, 1]. Floats pass through unchanged."""
+    """Convert to float32 in [0, 1].
+
+    - uint8 input: scaled by 1/255 to [0, 1].
+    - Any other input: cast to float32; values are assumed already normalized.
+    """
     if arr.dtype == np.uint8:
         return arr.astype(np.float32) / 255.0
     return arr.astype(np.float32)

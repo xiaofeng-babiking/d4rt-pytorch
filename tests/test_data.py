@@ -145,3 +145,10 @@ def test_to_float32_normalized_uint8_input():
     out = to_float32_normalized(arr)
     assert out.dtype == np.float32
     np.testing.assert_allclose(out, [[0.0, 128 / 255, 1.0]], atol=1e-6)
+
+
+def test_to_float32_normalized_float_input_casts_to_float32():
+    arr = np.array([[0.0, 0.5, 1.0]], dtype=np.float64)
+    out = to_float32_normalized(arr)
+    assert out.dtype == np.float32
+    np.testing.assert_allclose(out, [[0.0, 0.5, 1.0]], atol=1e-6)
