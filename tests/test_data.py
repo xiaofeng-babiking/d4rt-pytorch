@@ -82,3 +82,38 @@ def test_stub_dataset_raises(cls):
         cls("/tmp/does-not-matter", split="train", num_frames=4,
             img_size=64, num_queries=32, transform=None)
     assert "pointodyssey" in str(exc.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Collate
+# ---------------------------------------------------------------------------
+
+from data import collate_fn  # noqa: E402
+
+
+def _fake_sample(n_queries=4):
+    return {
+        "video": torch.zeros(2, 8, 8, 3, dtype=torch.float32),
+        "coords": torch.zeros(n_queries, 2, dtype=torch.float32),
+        "t_src": torch.zeros(n_queries, dtype=torch.long),
+        "t_tgt": torch.zeros(n_queries, dtype=torch.long),
+        "t_cam": torch.zeros(n_queries, dtype=torch.long),
+        "aspect_ratio": torch.tensor([1.0, 1.0], dtype=torch.float32),
+        "targets": {
+            "pos_3d": torch.zeros(n_queries, 3, dtype=torch.float32),
+            "mask_3d": torch.zeros(n_queries, dtype=torch.float32),
+        },
+    }
+
+
+def test_collate_stacks_top_level_and_nested():
+    batch = [_fake_sample(), _fake_sample()]
+    out = collate_fn(batch)
+
+    assert out["video"].shape == (2, 2, 8, 8, 3)
+    assert out["coords"].shape == (2, 4, 2)
+    assert out["t_src"].shape == (2, 4)
+    assert out["aspect_ratio"].shape == (2, 2)
+    assert isinstance(out["targets"], dict)
+    assert out["targets"]["pos_3d"].shape == (2, 4, 3)
+    assert out["targets"]["mask_3d"].shape == (2, 4)
