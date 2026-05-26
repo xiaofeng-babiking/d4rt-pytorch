@@ -543,3 +543,35 @@ def test_pointodyssey_drops_short_sequences(tmp_path):
     )
     # Only the long sequence survives the length filter
     assert len(ds) == 1
+
+
+# ---------------------------------------------------------------------------
+# Integration: collate + D4RTLoss
+# ---------------------------------------------------------------------------
+
+from losses import D4RTLoss  # noqa: E402
+
+
+def test_collate_and_loss_compat(tmp_path):
+    make_fake_pointodyssey(tmp_path, num_sequences=2, num_frames=16)
+    ds = PointOdysseyDataset(
+        data_root=str(tmp_path), split="train",
+        num_frames=8, img_size=32, num_queries=64, transform=None,
+    )
+    batch = collate_fn([ds[0], ds[1]])
+
+    B, N = 2, 64
+    predictions = {
+        "pos_3d": torch.randn(B, N, 3, requires_grad=True),
+        "pos_2d": torch.randn(B, N, 2),
+        "visibility": torch.randn(B, N, 1),
+        "displacement": torch.randn(B, N, 3),
+        "normal": torch.randn(B, N, 3),
+        "confidence": torch.sigmoid(torch.randn(B, N, 1)),
+    }
+
+    losses = D4RTLoss()(predictions, batch["targets"])
+    assert "loss" in losses
+    assert torch.isfinite(losses["loss"]).item()
+    losses["loss"].backward()
+    assert predictions["pos_3d"].grad is not None
