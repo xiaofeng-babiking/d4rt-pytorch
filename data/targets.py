@@ -140,7 +140,9 @@ def build_targets(
         valid_3d = (cam_tgt[:, 2] > 0) & np.isfinite(cam_tgt).all(axis=1)
         valid_src = (cam_src[:, 2] > 0) & np.isfinite(cam_src).all(axis=1)
         mask_3d[idxs] = valid_3d.astype(np.float32)
-        mask_2d[idxs] = (valid_3d & (vis_vals > 0.5)).astype(np.float32)
+        # Image-bounds check for pos_2d (spec §6: mask_2d requires pos_2d in [0,1]).
+        in_bounds = (pix[:, 0] >= 0) & (pix[:, 0] <= 1) & (pix[:, 1] >= 0) & (pix[:, 1] <= 1)
+        mask_2d[idxs] = (valid_3d & (vis_vals > 0.5) & in_bounds).astype(np.float32)
         mask_disp[idxs] = (valid_3d & valid_src).astype(np.float32)
 
         # Normal at t_src pixel
@@ -170,7 +172,8 @@ def build_targets(
         valid = (z > 0) & np.isfinite(z)
         visibility[idxs] = valid.astype(np.float32)
         mask_3d[idxs] = valid.astype(np.float32)
-        mask_2d[idxs] = valid.astype(np.float32)
+        in_bounds = (pix[:, 0] >= 0) & (pix[:, 0] <= 1) & (pix[:, 1] >= 0) & (pix[:, 1] <= 1)
+        mask_2d[idxs] = (valid & in_bounds).astype(np.float32)
         mask_vis[idxs] = 1.0
         # displacement = 0, mask_disp = 0 (default zeros — correct)
         normal[idxs] = normals[t, v_i, u_i]
@@ -214,7 +217,8 @@ def build_targets(
         valid = (z > 0) & np.isfinite(z) & (cam_cam_pts[:, 2] > 0)
         visibility[idxs] = valid.astype(np.float32)
         mask_3d[idxs] = valid.astype(np.float32)
-        mask_2d[idxs] = valid.astype(np.float32)
+        in_bounds = (pix[:, 0] >= 0) & (pix[:, 0] <= 1) & (pix[:, 1] >= 0) & (pix[:, 1] <= 1)
+        mask_2d[idxs] = (valid & in_bounds).astype(np.float32)
         mask_vis[idxs] = 1.0
         normal[idxs] = normals[tsrc, v_i, u_i]
         mask_normal[idxs] = 1.0

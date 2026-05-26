@@ -55,7 +55,13 @@ class PointOdysseyDataset(Dataset):
         self.transform = transform
         self.task_mix = task_mix
         self.rng_seed = rng_seed
-        self._temporal = TemporalSubsampling(AugmentationConfig())
+
+        # Use the transform's AugmentationConfig for temporal stride bounds if
+        # present; otherwise fall back to defaults.
+        if transform is not None and hasattr(transform, "cfg"):
+            self._temporal = TemporalSubsampling(transform.cfg)
+        else:
+            self._temporal = TemporalSubsampling(AugmentationConfig())
 
         # Resolve base seed once. `None` means "fresh entropy at construction time"
         # so users get non-deterministic behavior by default; pass an int for
@@ -151,6 +157,14 @@ class PointOdysseyDataset(Dataset):
 
         # Clamp the effective frame budget to the shortest available source.
         effective_frame_count = min(frame_count, anno_T, e_T)
+
+        if effective_frame_count < self.num_frames:
+            raise RuntimeError(
+                f"Sequence {seq_dir} has only {effective_frame_count} aligned "
+                f"frames (rgb={frame_count}, anno={anno_T}, extrinsics={e_T}) "
+                f"but num_frames={self.num_frames} was requested. "
+                f"Check that the rgb/depths/anno/extrinsics are all the same length."
+            )
 
         # Pick stride and start frame against the clamped budget.
         stride = self._temporal.sample_stride(rng)

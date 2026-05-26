@@ -56,16 +56,15 @@ def _emit_point_track(quota, num_frames, img_size,
     visible_any = visibilities.sum(axis=0) > 0
     valid_traj_idxs = np.where(visible_any)[0]
     if len(valid_traj_idxs) == 0:
-        # No tracks — fall back to filling with depth-style queries
-        for i in range(quota):
-            t = int(rng.integers(0, T))
-            u = float(rng.random())
-            v = float(rng.random())
-            coords[i] = (u, v)
-            t_src[i] = t
-            t_tgt[i] = t
-            t_cam[i] = t
-        return coords, t_src, t_tgt, t_cam, traj_idx
+        # No tracks — fall back to filling with depth-style queries.
+        # Return the per-query task IDs so the caller knows these are NOT track queries.
+        t = rng.integers(0, T, size=quota).astype(np.int64)
+        coords[:] = rng.random((quota, 2)).astype(np.float32)
+        t_src[:] = t
+        t_tgt[:] = t
+        t_cam[:] = t
+        fallback_task_ids = np.full((quota,), TASK_DEPTH, dtype=np.int64)
+        return coords, t_src, t_tgt, t_cam, traj_idx, fallback_task_ids
 
     filled = 0
     while filled < quota:
@@ -87,7 +86,7 @@ def _emit_point_track(quota, num_frames, img_size,
             traj_idx[filled + k] = p
         filled += take
 
-    return coords, t_src, t_tgt, t_cam, traj_idx
+    return coords, t_src, t_tgt, t_cam, traj_idx, None
 
 
 def _emit_depth(quota, num_frames, rng):
@@ -161,11 +160,14 @@ def sample_queries(
 
     # task 0: point track
     if quotas[0] > 0:
-        c, ts, tt, tc, ti = _emit_point_track(
+        c, ts, tt, tc, ti, override = _emit_point_track(
             quotas[0], num_frames, img_size, trajs_2d, visibilities, rng)
         pieces.append((c, ts, tt, tc))
         traj_idx_all.append(ti)
-        task_ids.append(np.full((quotas[0],), TASK_POINT_TRACK, dtype=np.int64))
+        if override is not None:
+            task_ids.append(override)
+        else:
+            task_ids.append(np.full((quotas[0],), TASK_POINT_TRACK, dtype=np.int64))
 
     # task 1: depth
     if quotas[1] > 0:
