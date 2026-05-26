@@ -117,3 +117,31 @@ def test_collate_stacks_top_level_and_nested():
     assert isinstance(out["targets"], dict)
     assert out["targets"]["pos_3d"].shape == (2, 4, 3)
     assert out["targets"]["mask_3d"].shape == (2, 4)
+
+
+# ---------------------------------------------------------------------------
+# Base helpers
+# ---------------------------------------------------------------------------
+
+from data.base import resize_frames_square, compute_aspect_ratio, to_float32_normalized  # noqa: E402
+
+
+def test_resize_frames_square_changes_only_HW():
+    frames = np.zeros((4, 100, 200, 3), dtype=np.uint8)
+    out = resize_frames_square(frames, 64)
+    assert out.shape == (4, 64, 64, 3)
+    assert out.dtype == np.uint8
+
+
+def test_compute_aspect_ratio_normalizes_by_max():
+    # Landscape: H=480, W=640 -> max=640 -> (480/640, 640/640) = (0.75, 1.0)
+    ar = compute_aspect_ratio(480, 640)
+    assert ar.shape == (2,)
+    np.testing.assert_allclose(ar, [0.75, 1.0], atol=1e-6)
+
+
+def test_to_float32_normalized_uint8_input():
+    arr = np.array([[0, 128, 255]], dtype=np.uint8)
+    out = to_float32_normalized(arr)
+    assert out.dtype == np.float32
+    np.testing.assert_allclose(out, [[0.0, 128 / 255, 1.0]], atol=1e-6)
