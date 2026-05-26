@@ -374,3 +374,81 @@ def test_sample_queries_intrinsics_task_invariants():
     assert (out["task_id"] == 4).all()
     np.testing.assert_array_equal(out["t_src"], out["t_tgt"])
     np.testing.assert_array_equal(out["t_src"], out["t_cam"])
+
+
+# ---------------------------------------------------------------------------
+# Target generation
+# ---------------------------------------------------------------------------
+
+from data.targets import build_targets  # noqa: E402
+
+
+def _make_inputs(T=16, P=20, H=64, W=64, img_size=64, num_queries=128):
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=T, P=P, H=H, W=W)
+    K = np.array([[img_size * 0.8, 0, img_size / 2],
+                  [0, img_size * 0.8, img_size / 2],
+                  [0, 0, 1]], dtype=np.float32)
+    intrinsics = np.broadcast_to(K, (T, 3, 3)).copy()
+    extrinsics = np.broadcast_to(np.eye(4, dtype=np.float32), (T, 4, 4)).copy()
+    rng = np.random.default_rng(7)
+    q = sample_queries(num_queries=num_queries, num_frames=T, img_size=img_size,
+                       trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+                       depth=depth, normals=normals,
+                       task_mix=(0.4, 0.3, 0.15, 0.10, 0.05), rng=rng)
+    return q, trajs_2d, trajs_3d, vis, depth, normals, intrinsics, extrinsics
+
+
+def test_build_targets_keys_and_shapes():
+    q, trajs_2d, trajs_3d, vis, depth, normals, K, E = _make_inputs(num_queries=128)
+    tgt = build_targets(
+        coords=q["coords"], t_src=q["t_src"], t_tgt=q["t_tgt"], t_cam=q["t_cam"],
+        task_id=q["task_id"], query_meta=q["query_meta"],
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        intrinsics=K, extrinsics=E, img_size=64,
+    )
+    required = {"pos_3d", "pos_2d", "visibility", "displacement", "normal",
+                "mask_3d", "mask_2d", "mask_vis", "mask_disp", "mask_normal"}
+    assert required <= set(tgt.keys())
+    N = 128
+    assert tgt["pos_3d"].shape == (N, 3)
+    assert tgt["pos_2d"].shape == (N, 2)
+    assert tgt["visibility"].shape == (N,)
+    assert tgt["displacement"].shape == (N, 3)
+    assert tgt["normal"].shape == (N, 3)
+    for m in ("mask_3d", "mask_2d", "mask_vis", "mask_disp", "mask_normal"):
+        assert tgt[m].shape == (N,)
+        assert tgt[m].dtype == torch.float32
+        assert tgt[m].min() >= 0.0 and tgt[m].max() <= 1.0
+
+
+def test_build_targets_displacement_only_for_track_queries():
+    q, trajs_2d, trajs_3d, vis, depth, normals, K, E = _make_inputs(num_queries=512)
+    tgt = build_targets(
+        coords=q["coords"], t_src=q["t_src"], t_tgt=q["t_tgt"], t_cam=q["t_cam"],
+        task_id=q["task_id"], query_meta=q["query_meta"],
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        intrinsics=K, extrinsics=E, img_size=64,
+    )
+    # mask_disp == 1 only where task_id == 0 (and pos_3d valid both ends)
+    is_track = torch.from_numpy(q["task_id"] == 0)
+    # Wherever mask_disp == 1, it must be a track query
+    assert (tgt["mask_disp"][~is_track] == 0).all()
+
+
+def test_build_targets_pos_2d_normalized():
+    q, trajs_2d, trajs_3d, vis, depth, normals, K, E = _make_inputs(num_queries=128)
+    tgt = build_targets(
+        coords=q["coords"], t_src=q["t_src"], t_tgt=q["t_tgt"], t_cam=q["t_cam"],
+        task_id=q["task_id"], query_meta=q["query_meta"],
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        intrinsics=K, extrinsics=E, img_size=64,
+    )
+    # pos_2d should mostly be in [-eps, 1+eps] for valid queries
+    valid = tgt["mask_3d"] > 0
+    pos_2d_valid = tgt["pos_2d"][valid]
+    # Allow some out-of-bounds (off-screen projections); just check ballpark
+    in_bounds_frac = ((pos_2d_valid >= -0.5) & (pos_2d_valid <= 1.5)).all(dim=-1).float().mean()
+    assert in_bounds_frac > 0.5
