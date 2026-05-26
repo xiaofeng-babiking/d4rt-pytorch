@@ -34,9 +34,10 @@ class VideoAugmentation:
     resampling would cause flicker and destroy the tracking signal.
     """
 
-    def __init__(self, cfg: Optional[AugmentationConfig] = None):
+    def __init__(self, cfg: Optional[AugmentationConfig] = None,
+                 seed: Optional[int] = None):
         self.cfg = cfg or AugmentationConfig()
-        self._rng = np.random.default_rng()
+        self._rng = np.random.default_rng(seed)
 
     def __call__(self, video: np.ndarray) -> np.ndarray:
         """Apply photometric augmentation to a video clip.

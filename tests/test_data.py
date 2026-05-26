@@ -51,3 +51,17 @@ def test_temporal_subsampling_range():
         s = ts.sample_stride(rng)
         assert 1 <= s <= 4
         assert isinstance(s, int)
+
+
+def test_video_augmentation_blur_applied():
+    """Blur branch must produce valid output shape/dtype/range."""
+    aug = VideoAugmentation(
+        AugmentationConfig(brightness=0.0, contrast=0.0, saturation=0.0, hue=0.0,
+                           blur_prob=1.0, blur_sigma_max=1.5),
+        seed=42,
+    )
+    video = np.random.RandomState(0).rand(4, 32, 32, 3).astype(np.float32)
+    out = aug(video)
+    assert out.shape == video.shape
+    assert out.dtype == np.float32
+    assert out.min() >= 0.0 and out.max() <= 1.0
