@@ -452,3 +452,34 @@ def test_build_targets_pos_2d_normalized():
     # Allow some out-of-bounds (off-screen projections); just check ballpark
     in_bounds_frac = ((pos_2d_valid >= -0.5) & (pos_2d_valid <= 1.5)).all(dim=-1).float().mean()
     assert in_bounds_frac > 0.5
+
+
+def test_build_targets_pos_2d_roundtrips_pos_3d_for_depth_task():
+    """For task 1, pos_2d must round-trip through the intrinsics back to coords."""
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20, H=64, W=64)
+    img_size = 64
+    K = np.array([[img_size * 0.8, 0, img_size / 2],
+                  [0, img_size * 0.8, img_size / 2],
+                  [0, 0, 1]], dtype=np.float32)
+    intrinsics = np.broadcast_to(K, (16, 3, 3)).copy()
+    extrinsics = np.broadcast_to(np.eye(4, dtype=np.float32), (16, 4, 4)).copy()
+    rng = np.random.default_rng(11)
+    q = sample_queries(num_queries=64, num_frames=16, img_size=img_size,
+                       trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+                       depth=depth, normals=normals,
+                       task_mix=(0.0, 1.0, 0.0, 0.0, 0.0), rng=rng)
+    tgt = build_targets(
+        coords=q["coords"], t_src=q["t_src"], t_tgt=q["t_tgt"], t_cam=q["t_cam"],
+        task_id=q["task_id"], query_meta=q["query_meta"],
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        intrinsics=intrinsics, extrinsics=extrinsics, img_size=img_size,
+    )
+    # For depth-task queries with valid masks, the projected pos_2d should
+    # be within ~1 pixel of the input coords (it back-projects then projects
+    # from the same K, so it's a round-trip).
+    valid = tgt["mask_3d"] > 0
+    coords_t = torch.from_numpy(q["coords"])
+    diff = (tgt["pos_2d"][valid] - coords_t[valid]).abs()
+    # Allow ~1 pixel of slop in normalized coords: 1 / (64-1) ~ 0.016
+    assert diff.max().item() < 0.05, f"pos_2d roundtrip error too large: {diff.max().item()}"

@@ -52,12 +52,10 @@ def _per_query_K(intrinsics: np.ndarray, t: np.ndarray) -> np.ndarray:
     return intrinsics[t]
 
 
-def _per_query_E(extrinsics: Optional[np.ndarray], t: np.ndarray, default_eye=True):
+def _per_query_E(extrinsics: Optional[np.ndarray], t: np.ndarray):
     if extrinsics is None:
-        if default_eye:
-            return np.broadcast_to(np.eye(4, dtype=np.float32),
-                                    (t.shape[0], 4, 4)).copy()
-        return None
+        return np.broadcast_to(np.eye(4, dtype=np.float32),
+                                (t.shape[0], 4, 4)).copy()
     return extrinsics[t]
 
 
@@ -128,9 +126,9 @@ def build_targets(
         pos_3d[idxs] = cam_tgt
         displacement[idxs] = cam_tgt - cam_src
 
-        # 2D projection at t_tgt
-        K_tgt = _per_query_K(intrinsics, ttgt)
-        pix = _project(cam_tgt, K_tgt) / (img_size - 1)
+        # 2D projection in camera-t_cam frame (cam_tgt is already in t_cam coords).
+        K_cam = _per_query_K(intrinsics, tcam)
+        pix = _project(cam_tgt, K_cam) / (img_size - 1)
         pos_2d[idxs] = pix.astype(np.float32)
 
         # Visibility from annotations
@@ -138,9 +136,9 @@ def build_targets(
         visibility[idxs] = vis_vals
         mask_vis[idxs] = 1.0
 
-        # Mask 3D where Z is positive
-        valid_3d = cam_tgt[:, 2] > 0
-        valid_src = cam_src[:, 2] > 0
+        # Mask 3D where Z is positive AND values are finite (guard NaN/Inf).
+        valid_3d = (cam_tgt[:, 2] > 0) & np.isfinite(cam_tgt).all(axis=1)
+        valid_src = (cam_src[:, 2] > 0) & np.isfinite(cam_src).all(axis=1)
         mask_3d[idxs] = valid_3d.astype(np.float32)
         mask_2d[idxs] = (valid_3d & (vis_vals > 0.5)).astype(np.float32)
         mask_disp[idxs] = (valid_3d & valid_src).astype(np.float32)
