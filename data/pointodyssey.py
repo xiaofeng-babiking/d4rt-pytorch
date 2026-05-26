@@ -4,7 +4,6 @@ See docs/superpowers/specs/2026-05-25-data-module-design.md (§4) for the
 expected on-disk layout and __getitem__ contract.
 """
 
-import os
 import warnings
 from pathlib import Path
 from typing import Optional
@@ -34,7 +33,6 @@ class PointOdysseyDataset(Dataset):
         num_queries: Queries per sample.
         transform: Optional VideoAugmentation instance (applied after resize).
         task_mix: Per-task query mix (point_track, depth, point_cloud, extrinsics, intrinsics).
-        min_visible_frac: Min visibility fraction for a trajectory to be used as a track query.
         rng_seed: Optional base seed; per-sample RNG combines this with idx.
     """
 
@@ -47,7 +45,6 @@ class PointOdysseyDataset(Dataset):
         num_queries: int = 2048,
         transform=None,
         task_mix=(0.4, 0.3, 0.15, 0.10, 0.05),
-        min_visible_frac: float = 0.5,
         rng_seed: Optional[int] = None,
     ):
         self.data_root = Path(data_root)
@@ -57,7 +54,6 @@ class PointOdysseyDataset(Dataset):
         self.num_queries = num_queries
         self.transform = transform
         self.task_mix = task_mix
-        self.min_visible_frac = min_visible_frac
         self.rng_seed = rng_seed
         self._temporal = TemporalSubsampling(AugmentationConfig())
 
@@ -83,15 +79,18 @@ class PointOdysseyDataset(Dataset):
                 f"No sequences in {split_dir} with >= {num_frames} frames."
             )
 
-        # Probe one sequence to validate anno schema.
+        # Probe first sequence's annotation file to fail-fast on malformed data.
         probe_anno = sequences[0][0] / "anno.npz"
-        if probe_anno.exists():
-            with np.load(probe_anno) as a:
-                missing = REQUIRED_ANNO_KEYS - set(a.files)
-                if missing:
-                    raise RuntimeError(
-                        f"{probe_anno} missing required keys: {missing}"
-                    )
+        if not probe_anno.exists():
+            raise RuntimeError(
+                f"anno.npz not found in first sequence: {probe_anno}"
+            )
+        with np.load(probe_anno) as a:
+            missing = REQUIRED_ANNO_KEYS - set(a.files)
+            if missing:
+                raise RuntimeError(
+                    f"{probe_anno} missing required keys: {missing}"
+                )
 
         # Probe extrinsics: warn once if missing.
         if not (sequences[0][0] / "extrinsics.npy").exists():
@@ -129,7 +128,8 @@ class PointOdysseyDataset(Dataset):
 
         # Load RGBs (raw resolution)
         rgbs_dir = seq_dir / "rgbs"
-        rgb_files = sorted(rgbs_dir.iterdir())
+        rgb_files = sorted(f for f in rgbs_dir.iterdir()
+                           if f.suffix.lower() in {".jpg", ".png"})
         raw = []
         for t in frame_indices:
             img = Image.open(rgb_files[int(t)]).convert("RGB")
@@ -147,8 +147,13 @@ class PointOdysseyDataset(Dataset):
             video = self.transform(video)
 
         # Load depth / normals at original resolution, then resize to img_size
-        depth_files = sorted((seq_dir / "depths").iterdir())
-        normal_files = sorted((seq_dir / "normals").iterdir()) if (seq_dir / "normals").is_dir() else None
+        depth_files = sorted(f for f in (seq_dir / "depths").iterdir()
+                             if f.suffix.lower() == ".npy")
+        if (seq_dir / "normals").is_dir():
+            normal_files = sorted(f for f in (seq_dir / "normals").iterdir()
+                                  if f.suffix.lower() == ".npy")
+        else:
+            normal_files = None
 
         depth_stack = []
         normal_stack = []
