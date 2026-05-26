@@ -483,3 +483,63 @@ def test_build_targets_pos_2d_roundtrips_pos_3d_for_depth_task():
     diff = (tgt["pos_2d"][valid] - coords_t[valid]).abs()
     # Allow ~1 pixel of slop in normalized coords: 1 / (64-1) ~ 0.016
     assert diff.max().item() < 0.05, f"pos_2d roundtrip error too large: {diff.max().item()}"
+
+
+# ---------------------------------------------------------------------------
+# PointOdysseyDataset (integration)
+# ---------------------------------------------------------------------------
+
+from data import PointOdysseyDataset  # noqa: E402
+from data.augmentations import AugmentationConfig as _AC, VideoAugmentation as _VA  # noqa: E402
+
+
+def test_pointodyssey_smoke(tmp_path):
+    make_fake_pointodyssey(tmp_path, num_sequences=2, num_frames=16,
+                            img_h=64, img_w=64, num_trajs=30)
+    ds = PointOdysseyDataset(
+        data_root=str(tmp_path),
+        split="train",
+        num_frames=8,
+        img_size=32,
+        num_queries=64,
+        transform=_VA(_AC(blur_prob=0.0)),
+    )
+    assert len(ds) == 2
+    sample = ds[0]
+
+    assert sample["video"].shape == (8, 32, 32, 3)
+    assert sample["video"].dtype == torch.float32
+    assert sample["video"].min() >= 0.0 and sample["video"].max() <= 1.0
+
+    assert sample["coords"].shape == (64, 2)
+    assert sample["t_src"].shape == (64,)
+    assert sample["t_tgt"].shape == (64,)
+    assert sample["t_cam"].shape == (64,)
+    assert sample["aspect_ratio"].shape == (2,)
+
+    for key in ("pos_3d", "pos_2d", "visibility", "displacement", "normal",
+                "mask_3d", "mask_2d", "mask_vis", "mask_disp", "mask_normal"):
+        assert key in sample["targets"], f"missing target key: {key}"
+    assert sample["targets"]["pos_3d"].shape == (64, 3)
+    assert sample["targets"]["mask_3d"].shape == (64,)
+
+
+def test_pointodyssey_drops_short_sequences(tmp_path):
+    # 1 long seq + 1 short seq; ask for num_frames longer than the short one
+    make_fake_pointodyssey(tmp_path, num_sequences=1, num_frames=32)
+    # Add a short sequence manually
+    short_dir = tmp_path / "train" / "seq_short"
+    short_dir.mkdir(parents=True)
+    (short_dir / "rgbs").mkdir()
+    # Only 4 frames — too short for num_frames=16
+    for t in range(4):
+        arr = np.zeros((64, 64, 3), dtype=np.uint8)
+        _PILImage.fromarray(arr).save(short_dir / "rgbs" / f"rgb_{t:05d}.jpg")
+    # No depths/normals etc — the scanner shouldn't even attempt to read
+
+    ds = PointOdysseyDataset(
+        data_root=str(tmp_path), split="train",
+        num_frames=16, img_size=32, num_queries=32, transform=None,
+    )
+    # Only the long sequence survives the length filter
+    assert len(ds) == 1
