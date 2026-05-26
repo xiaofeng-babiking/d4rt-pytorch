@@ -164,12 +164,17 @@ from PIL import Image as _PILImage  # noqa: E402
 
 def make_fake_pointodyssey(root: Path, *, num_sequences: int = 2,
                             num_frames: int = 32, img_h: int = 64, img_w: int = 64,
-                            num_trajs: int = 40, split: str = "train") -> Path:
+                            num_trajs: int = 40, split: str = "train",
+                            with_trajectories: bool = True,
+                            with_normals: bool = True) -> Path:
     """Build a tiny synthetic PointOdyssey-shaped dataset on disk.
 
-    Layout matches the spec §4 expectation:
-      {root}/{split}/seq_<i>/{rgbs,depths,normals}/...
-      {root}/{split}/seq_<i>/{anno.npz, intrinsics.npy, extrinsics.npy}
+    Mirrors the real PointOdyssey layout:
+      {root}/{split}/seq_<i>/rgb/*.jpg
+      {root}/{split}/seq_<i>/depth/*.npy
+      {root}/{split}/seq_<i>/cam/*.npz  (per-frame: intrinsics, pose)
+      {root}/{split}/seq_<i>/normals/*.npy    (optional)
+      {root}/{split}/seq_<i>/anno.npz         (optional)
 
     Returns:
         The split directory: {root}/{split}.
@@ -178,56 +183,58 @@ def make_fake_pointodyssey(root: Path, *, num_sequences: int = 2,
     split_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(0)
 
+    K = np.array([[img_w * 0.8, 0, img_w / 2],
+                  [0, img_h * 0.8, img_h / 2],
+                  [0, 0, 1]], dtype=np.float32)
+
     for s in range(num_sequences):
         seq_dir = split_dir / f"seq_{s:04d}"
-        (seq_dir / "rgbs").mkdir(parents=True, exist_ok=True)
-        (seq_dir / "depths").mkdir(parents=True, exist_ok=True)
-        (seq_dir / "normals").mkdir(parents=True, exist_ok=True)
+        (seq_dir / "rgb").mkdir(parents=True, exist_ok=True)
+        (seq_dir / "depth").mkdir(parents=True, exist_ok=True)
+        (seq_dir / "cam").mkdir(parents=True, exist_ok=True)
+        if with_normals:
+            (seq_dir / "normals").mkdir(parents=True, exist_ok=True)
 
-        # RGB frames as JPEGs
         for t in range(num_frames):
+            # RGB
             arr = (rng.random((img_h, img_w, 3)) * 255).astype(np.uint8)
-            _PILImage.fromarray(arr).save(seq_dir / "rgbs" / f"rgb_{t:05d}.jpg",
+            _PILImage.fromarray(arr).save(seq_dir / "rgb" / f"{t:05d}.jpg",
                                           quality=95)
-
-        # Depth + normals as per-frame .npy
-        for t in range(num_frames):
+            # Depth
             depth = (rng.random((img_h, img_w)).astype(np.float32) * 5.0 + 0.5)
-            np.save(seq_dir / "depths" / f"depth_{t:05d}.npy", depth)
-            normal = rng.standard_normal((img_h, img_w, 3)).astype(np.float32)
-            normal /= (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-8)
-            np.save(seq_dir / "normals" / f"normal_{t:05d}.npy", normal)
+            np.save(seq_dir / "depth" / f"{t:05d}.npy", depth)
+            # Per-frame camera intrinsics + pose
+            np.savez(seq_dir / "cam" / f"{t:05d}.npz",
+                     intrinsics=K, pose=np.eye(4, dtype=np.float32))
+            # Normals (optional)
+            if with_normals:
+                normal = rng.standard_normal((img_h, img_w, 3)).astype(np.float32)
+                normal /= (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-8)
+                np.save(seq_dir / "normals" / f"{t:05d}.npy", normal)
 
-        # Trajectories: T x P x 2/3, visibilities T x P
-        trajs_2d = (rng.random((num_frames, num_trajs, 2)).astype(np.float32)
-                    * np.array([img_w - 1, img_h - 1], dtype=np.float32))
-        trajs_3d = rng.standard_normal((num_frames, num_trajs, 3)).astype(np.float32)
-        trajs_3d[..., 2] = np.abs(trajs_3d[..., 2]) + 0.5  # positive Z
-        visibilities = (rng.random((num_frames, num_trajs)) > 0.1).astype(np.float32)
-        np.savez(seq_dir / "anno.npz",
-                 trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=visibilities)
-
-        # Camera matrices
-        K = np.array([[img_w * 0.8, 0, img_w / 2],
-                      [0, img_h * 0.8, img_h / 2],
-                      [0, 0, 1]], dtype=np.float32)
-        intrinsics = np.broadcast_to(K, (num_frames, 3, 3)).copy()
-        np.save(seq_dir / "intrinsics.npy", intrinsics)
-
-        extrinsics = np.broadcast_to(np.eye(4, dtype=np.float32),
-                                      (num_frames, 4, 4)).copy()
-        np.save(seq_dir / "extrinsics.npy", extrinsics)
+        # Top-level anno.npz (optional)
+        if with_trajectories:
+            trajs_2d = (rng.random((num_frames, num_trajs, 2)).astype(np.float32)
+                        * np.array([img_w - 1, img_h - 1], dtype=np.float32))
+            trajs_3d = rng.standard_normal((num_frames, num_trajs, 3)).astype(np.float32)
+            trajs_3d[..., 2] = np.abs(trajs_3d[..., 2]) + 0.5
+            visibilities = (rng.random((num_frames, num_trajs)) > 0.1).astype(np.float32)
+            np.savez(seq_dir / "anno.npz",
+                     trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=visibilities)
 
     return split_dir
 
 
 def test_fake_pointodyssey_layout(tmp_path):
     root = make_fake_pointodyssey(tmp_path, num_sequences=2, num_frames=8)
-    assert (root / "seq_0000" / "rgbs" / "rgb_00000.jpg").exists()
-    assert (root / "seq_0000" / "depths" / "depth_00007.npy").exists()
+    assert (root / "seq_0000" / "rgb" / "00000.jpg").exists()
+    assert (root / "seq_0000" / "depth" / "00007.npy").exists()
+    assert (root / "seq_0000" / "cam" / "00000.npz").exists()
     assert (root / "seq_0001" / "anno.npz").exists()
-    anno = np.load(root / "seq_0000" / "anno.npz")
-    assert {"trajs_2d", "trajs_3d", "visibilities"} <= set(anno.files)
+    with np.load(root / "seq_0000" / "anno.npz") as anno:
+        assert {"trajs_2d", "trajs_3d", "visibilities"} <= set(anno.files)
+    with np.load(root / "seq_0000" / "cam" / "00000.npz") as cam:
+        assert {"intrinsics", "pose"} <= set(cam.files)
 
 
 # ---------------------------------------------------------------------------
@@ -530,12 +537,12 @@ def test_pointodyssey_drops_short_sequences(tmp_path):
     # Add a short sequence manually
     short_dir = tmp_path / "train" / "seq_short"
     short_dir.mkdir(parents=True)
-    (short_dir / "rgbs").mkdir()
+    (short_dir / "rgb").mkdir()
     # Only 4 frames — too short for num_frames=16
     for t in range(4):
         arr = np.zeros((64, 64, 3), dtype=np.uint8)
-        _PILImage.fromarray(arr).save(short_dir / "rgbs" / f"rgb_{t:05d}.jpg")
-    # No depths/normals etc — the scanner shouldn't even attempt to read
+        _PILImage.fromarray(arr).save(short_dir / "rgb" / f"{t:05d}.jpg")
+    # No depth/cam etc — the scanner drops on frame_count check, never reads
 
     ds = PointOdysseyDataset(
         data_root=str(tmp_path), split="train",
