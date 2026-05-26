@@ -598,7 +598,8 @@ def main():
 
     # Training loop
     if is_main:
-        print(f"\nStarting training from step {start_step}")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n[{ts}] Starting training from step {start_step}")
 
     model.train()
     step = start_step
@@ -649,7 +650,9 @@ def main():
                     lr = scheduler.get_last_lr()[0]
                     loss_str = ' | '.join([f'{k}: {v / args.log_freq:.4f}' for k, v in running_loss.items()])
 
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     print(
+                        f"[{ts}] "
                         f"Step {step}/{total_steps} | "
                         f"Epoch {epoch} | "
                         f"LR: {lr:.2e} | "
@@ -673,7 +676,8 @@ def main():
                     checkpoint_path = save_checkpoint(
                         model, optimizer, scheduler, scaler, step, epoch, args, output_dir
                     )
-                    print(f"Saved checkpoint to {checkpoint_path}")
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{ts}] Saved checkpoint to {checkpoint_path}")
 
                     if writer:
                         writer.flush()
