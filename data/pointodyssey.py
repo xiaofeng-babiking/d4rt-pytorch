@@ -57,6 +57,14 @@ class PointOdysseyDataset(Dataset):
         self.rng_seed = rng_seed
         self._temporal = TemporalSubsampling(AugmentationConfig())
 
+        # Resolve base seed once. `None` means "fresh entropy at construction time"
+        # so users get non-deterministic behavior by default; pass an int for
+        # reproducible runs.
+        if rng_seed is None:
+            self._base_seed = int(np.random.SeedSequence().entropy)
+        else:
+            self._base_seed = int(rng_seed)
+
         split_dir = self.data_root / split
         if not split_dir.is_dir():
             raise FileNotFoundError(
@@ -92,6 +100,20 @@ class PointOdysseyDataset(Dataset):
                     f"{probe_anno} missing required keys: {missing}"
                 )
 
+        # Probe depths/ directory to fail-fast.
+        probe_depths = sequences[0][0] / "depths"
+        if not probe_depths.is_dir():
+            raise RuntimeError(
+                f"depths/ directory not found in first sequence: {probe_depths}"
+            )
+
+        # Probe intrinsics.npy to fail-fast.
+        probe_K = sequences[0][0] / "intrinsics.npy"
+        if not probe_K.exists():
+            raise RuntimeError(
+                f"intrinsics.npy not found in first sequence: {probe_K}"
+            )
+
         # Probe extrinsics: warn once if missing.
         if not (sequences[0][0] / "extrinsics.npy").exists():
             warnings.warn(
@@ -110,19 +132,33 @@ class PointOdysseyDataset(Dataset):
         seq_dir, frame_count = self.sequences[idx]
 
         # Per-sample RNG (deterministic if rng_seed set)
-        base_seed = self.rng_seed if self.rng_seed is not None else 0
         worker_info = torch.utils.data.get_worker_info()
         worker_id = worker_info.id if worker_info else 0
-        rng = np.random.default_rng((base_seed * 1_000_003 + worker_id * 9973 + idx) & 0xFFFFFFFF)
+        seed_seq = np.random.SeedSequence([self._base_seed, worker_id, idx])
+        rng = np.random.default_rng(seed_seq)
 
-        # Pick stride and start frame
+        # Load anno first so we know the true frame budget.
+        anno_path = seq_dir / "anno.npz"
+        with np.load(anno_path) as a:
+            trajs_2d_full = a["trajs_2d"].astype(np.float32)       # (T_full, P, 2)
+            trajs_3d_full = a["trajs_3d"].astype(np.float32)
+            visibilities_full = a["visibilities"].astype(np.float32)
+        anno_T = trajs_2d_full.shape[0]
+
+        E_path = seq_dir / "extrinsics.npy"
+        E_full = np.load(E_path).astype(np.float32) if E_path.exists() else None
+        e_T = E_full.shape[0] if E_full is not None else anno_T
+
+        # Clamp the effective frame budget to the shortest available source.
+        effective_frame_count = min(frame_count, anno_T, e_T)
+
+        # Pick stride and start frame against the clamped budget.
         stride = self._temporal.sample_stride(rng)
         span = self.num_frames * stride
-        # Bound stride if window doesn't fit
-        while span > frame_count and stride > 1:
+        while span > effective_frame_count and stride > 1:
             stride -= 1
             span = self.num_frames * stride
-        max_start = max(0, frame_count - span)
+        max_start = max(0, effective_frame_count - span)
         start = int(rng.integers(0, max_start + 1)) if max_start > 0 else 0
         frame_indices = np.arange(start, start + span, stride)[: self.num_frames]
 
@@ -179,13 +215,6 @@ class PointOdysseyDataset(Dataset):
         depth = np.stack(depth_stack, axis=0)        # (T, S, S)
         normals = np.stack(normal_stack, axis=0)     # (T, S, S, 3)
 
-        # Annotations
-        anno_path = seq_dir / "anno.npz"
-        with np.load(anno_path) as a:
-            trajs_2d_full = a["trajs_2d"].astype(np.float32)       # (T_full, P, 2)
-            trajs_3d_full = a["trajs_3d"].astype(np.float32)
-            visibilities_full = a["visibilities"].astype(np.float32)
-
         # Slice annotations to the window AND rescale 2D pixel coords to img_size
         sx = self.img_size / orig_w
         sy = self.img_size / orig_h
@@ -209,12 +238,8 @@ class PointOdysseyDataset(Dataset):
         K_window[:, 1, 1] *= sy
         K_window[:, 1, 2] *= sy
 
-        E_path = seq_dir / "extrinsics.npy"
-        if E_path.exists():
-            E_full = np.load(E_path).astype(np.float32)
-            E_window = E_full[frame_indices].copy()
-        else:
-            E_window = None
+        # Slice extrinsics window (E_full was loaded above).
+        E_window = E_full[frame_indices].copy() if E_full is not None else None
 
         # Sample queries
         q = sample_queries(
