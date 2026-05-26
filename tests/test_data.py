@@ -65,3 +65,20 @@ def test_video_augmentation_blur_applied():
     assert out.shape == video.shape
     assert out.dtype == np.float32
     assert out.min() >= 0.0 and out.max() <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Stubs
+# ---------------------------------------------------------------------------
+
+import pytest as _pytest  # noqa: E402
+
+from data import VideoDataset, KubricDataset, SintelDataset, ScanNetDataset  # noqa: E402
+
+
+@_pytest.mark.parametrize("cls", [VideoDataset, KubricDataset, SintelDataset, ScanNetDataset])
+def test_stub_dataset_raises(cls):
+    with _pytest.raises(NotImplementedError) as exc:
+        cls("/tmp/does-not-matter", split="train", num_frames=4,
+            img_size=64, num_queries=32, transform=None)
+    assert "pointodyssey" in str(exc.value).lower()
