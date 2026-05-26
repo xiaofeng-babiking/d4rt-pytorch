@@ -121,9 +121,12 @@ runs/
 tensorboard/
 wandb/
 
-# Data directories
-data/
+# Datasets (raw data – keep large files out of git)
 datasets/
+# Ignore raw data subdirectories under data/ but track Python source package
+data/raw/
+data/processed/
+data/cache/
 *.tar.gz
 *.tar
 *.zip
