@@ -39,7 +39,14 @@ from torch.cuda.amp import autocast, GradScaler
 
 from models import D4RT, create_d4rt
 from losses import D4RTLoss
-from data import VideoDataset, KubricDataset, SintelDataset, ScanNetDataset, collate_fn
+from data import (
+    PointOdysseyDataset,
+    VideoDataset,
+    KubricDataset,
+    SintelDataset,
+    ScanNetDataset,
+    collate_fn,
+)
 from data.augmentations import VideoAugmentation, TemporalSubsampling, AugmentationConfig
 
 # Optional TensorBoard support
@@ -108,7 +115,7 @@ def parse_args():
     parser.add_argument('--data-root', type=str, required=True,
                         help='Path to data root')
     parser.add_argument('--dataset', type=str, default='video',
-                        choices=['video', 'kubric', 'sintel', 'scannet'],
+                        choices=['video', 'kubric', 'sintel', 'scannet', 'pointodyssey'],
                         help='Dataset type')
     parser.add_argument('--num-workers', type=int, default=4,
                         help='Number of data loading workers')
@@ -184,7 +191,16 @@ def create_dataloader(args, rank, world_size):
     transform = VideoAugmentation(aug_config)
 
     # Dataset
-    if args.dataset == 'kubric':
+    if args.dataset == 'pointodyssey':
+        dataset = PointOdysseyDataset(
+            args.data_root,
+            split='train',
+            num_frames=args.num_frames,
+            img_size=args.img_size,
+            num_queries=args.num_queries,
+            transform=transform
+        )
+    elif args.dataset == 'kubric':
         dataset = KubricDataset(
             args.data_root,
             split='train',
