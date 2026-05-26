@@ -228,3 +228,116 @@ def test_fake_pointodyssey_layout(tmp_path):
     assert (root / "seq_0001" / "anno.npz").exists()
     anno = np.load(root / "seq_0000" / "anno.npz")
     assert {"trajs_2d", "trajs_3d", "visibilities"} <= set(anno.files)
+
+
+# ---------------------------------------------------------------------------
+# Query sampling
+# ---------------------------------------------------------------------------
+
+from data.query_sampling import sample_queries  # noqa: E402
+
+# Task IDs from the spec
+TASK_POINT_TRACK = 0
+TASK_DEPTH = 1
+TASK_POINT_CLOUD = 2
+TASK_EXTRINSICS = 3
+TASK_INTRINSICS = 4
+
+
+def _fake_anno(T=16, P=20, H=64, W=64):
+    rng = np.random.default_rng(0)
+    trajs_2d = (rng.random((T, P, 2)).astype(np.float32)
+                * np.array([W - 1, H - 1], dtype=np.float32))
+    trajs_3d = rng.standard_normal((T, P, 3)).astype(np.float32)
+    trajs_3d[..., 2] = np.abs(trajs_3d[..., 2]) + 0.5
+    visibilities = np.ones((T, P), dtype=np.float32)  # always visible -> easy
+    depth = rng.random((T, H, W)).astype(np.float32) + 0.5
+    normals = rng.standard_normal((T, H, W, 3)).astype(np.float32)
+    return trajs_2d, trajs_3d, visibilities, depth, normals
+
+
+def test_sample_queries_shapes_and_ranges():
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20, H=64, W=64)
+    rng = np.random.default_rng(42)
+    out = sample_queries(
+        num_queries=256, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=(0.4, 0.3, 0.15, 0.10, 0.05),
+        rng=rng,
+    )
+    assert out["coords"].shape == (256, 2)
+    assert out["t_src"].shape == (256,)
+    assert out["t_tgt"].shape == (256,)
+    assert out["t_cam"].shape == (256,)
+    assert out["task_id"].shape == (256,)
+    assert out["coords"].min() >= 0.0 and out["coords"].max() <= 1.0
+    assert out["t_src"].min() >= 0 and out["t_src"].max() < 16
+    assert out["t_tgt"].min() >= 0 and out["t_tgt"].max() < 16
+    assert out["t_cam"].min() >= 0 and out["t_cam"].max() < 16
+    assert set(np.unique(out["task_id"]).tolist()) <= {0, 1, 2, 3, 4}
+
+
+def test_sample_queries_task_mix_distribution():
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20)
+    rng = np.random.default_rng(1)
+    mix = (0.4, 0.3, 0.15, 0.10, 0.05)
+    out = sample_queries(
+        num_queries=2000, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=mix, rng=rng,
+    )
+    counts = np.bincount(out["task_id"], minlength=5)
+    fracs = counts / counts.sum()
+    # Allow generous tolerance — remainders go to task 0
+    np.testing.assert_allclose(fracs[1:], mix[1:], atol=0.02)
+    assert fracs[0] >= mix[0] - 0.02  # may be a bit higher from remainders
+
+
+def test_sample_queries_point_track_invariants():
+    """For task 0 queries, t_src must be fixed per trajectory and t_tgt == t_cam."""
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20)
+    rng = np.random.default_rng(2)
+    out = sample_queries(
+        num_queries=500, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=(1.0, 0.0, 0.0, 0.0, 0.0),
+        rng=rng,
+    )
+    assert (out["task_id"] == 0).all()
+    np.testing.assert_array_equal(out["t_tgt"], out["t_cam"])
+
+
+def test_sample_queries_depth_task_invariants():
+    """For task 1 queries, t_src == t_tgt == t_cam."""
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20)
+    rng = np.random.default_rng(3)
+    out = sample_queries(
+        num_queries=300, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=(0.0, 1.0, 0.0, 0.0, 0.0),
+        rng=rng,
+    )
+    assert (out["task_id"] == 1).all()
+    np.testing.assert_array_equal(out["t_src"], out["t_tgt"])
+    np.testing.assert_array_equal(out["t_src"], out["t_cam"])
+
+
+def test_sample_queries_extrinsics_task_invariants():
+    """For task 3 queries, t_src is the anchor (constant) and t_tgt == t_cam."""
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20)
+    rng = np.random.default_rng(4)
+    out = sample_queries(
+        num_queries=200, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=(0.0, 0.0, 0.0, 1.0, 0.0),
+        rng=rng,
+    )
+    assert (out["task_id"] == 3).all()
+    # t_src is fixed at the anchor frame
+    assert len(np.unique(out["t_src"])) == 1
+    np.testing.assert_array_equal(out["t_tgt"], out["t_cam"])
