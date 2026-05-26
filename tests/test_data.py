@@ -341,3 +341,36 @@ def test_sample_queries_extrinsics_task_invariants():
     # t_src is fixed at the anchor frame
     assert len(np.unique(out["t_src"])) == 1
     np.testing.assert_array_equal(out["t_tgt"], out["t_cam"])
+
+
+def test_sample_queries_point_cloud_task_invariants():
+    """For task 2 queries, t_src == t_tgt and t_cam == anchor (num_frames // 2)."""
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20)
+    rng = np.random.default_rng(5)
+    out = sample_queries(
+        num_queries=200, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=(0.0, 0.0, 1.0, 0.0, 0.0),
+        rng=rng,
+    )
+    assert (out["task_id"] == 2).all()
+    np.testing.assert_array_equal(out["t_src"], out["t_tgt"])
+    assert (out["t_cam"] == 16 // 2).all()
+    assert out["query_meta"]["anchor"] == 16 // 2
+
+
+def test_sample_queries_intrinsics_task_invariants():
+    """For task 4 queries, t_src == t_tgt == t_cam (same as depth)."""
+    trajs_2d, trajs_3d, vis, depth, normals = _fake_anno(T=16, P=20)
+    rng = np.random.default_rng(6)
+    out = sample_queries(
+        num_queries=200, num_frames=16, img_size=64,
+        trajs_2d=trajs_2d, trajs_3d=trajs_3d, visibilities=vis,
+        depth=depth, normals=normals,
+        task_mix=(0.0, 0.0, 0.0, 0.0, 1.0),
+        rng=rng,
+    )
+    assert (out["task_id"] == 4).all()
+    np.testing.assert_array_equal(out["t_src"], out["t_tgt"])
+    np.testing.assert_array_equal(out["t_src"], out["t_cam"])

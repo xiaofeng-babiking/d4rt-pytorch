@@ -20,7 +20,13 @@ TASK_INTRINSICS = 4
 
 
 def _split_quota(total: int, mix):
-    """Split `total` queries by `mix` ratios; round to ints, remainder -> task 0."""
+    """Split `total` queries by `mix` ratios via floor-rounding.
+
+    Per spec §5: any remainder from floor-rounding is assigned to task 0
+    (point-track). This is intentional — point-track has the strongest
+    training signal in PointOdyssey, so biasing toward it under rounding
+    is a feature, not a bug. Do not change to largest-remainder.
+    """
     assert len(mix) == 5
     raw = np.array(mix, dtype=np.float64) * total
     quotas = np.floor(raw).astype(np.int64)
@@ -33,6 +39,11 @@ def _emit_point_track(quota, num_frames, img_size,
                        trajs_2d, visibilities, rng):
     """Emit point-tracking queries: one trajectory provides T queries (one per
     target frame) with t_src fixed at the trajectory's first visible frame.
+
+    Note: `img_size` is a scalar because the upstream dataset (PointOdyssey)
+    resizes all frames to a square and rescales `trajs_2d` to match before
+    this function is called. If a future caller passes non-square frames,
+    this normalization will need to take separate height/width.
     """
     T, P, _ = trajs_2d.shape
     coords = np.zeros((quota, 2), dtype=np.float32)
@@ -103,7 +114,14 @@ def _emit_extrinsics(quota, num_frames, anchor, rng):
 
 
 def _emit_intrinsics(quota, num_frames, rng):
-    """task 4: same tuple as depth (task 1), separate task_id for diagnostics."""
+    """task 4: same query tuple as depth (task 1).
+
+    The (u, v, t_src, t_tgt, t_cam) tuples are statistically identical to
+    task 1. We emit them with a separate `task_id=4` purely so dataset-side
+    diagnostics and logging can distinguish "intrinsics-flavored" queries
+    from depth queries — the model itself does NOT see task_id and treats
+    both identically. Per spec §5, this duplication is intentional.
+    """
     t = rng.integers(0, num_frames, size=quota).astype(np.int64)
     coords = rng.random((quota, 2)).astype(np.float32)
     return coords, t, t.copy(), t.copy(), -np.ones((quota,), dtype=np.int64)
